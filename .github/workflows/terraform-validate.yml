@@ -75,9 +75,12 @@ jobs:
         with:
           version: "latest"
 
-      - name: Run Trivy config scan
-        run: trivy config --exit-code 1 --severity CRITICAL .
-        # Scanne le répertoire courant pour les misconfigurations
-        # --exit-code 1 : fait échouer le job si des problèmes de sévérité >= configurée sont trouvés
-        # --severity CRITICAL : ne signale que les problèmes CRITICAL
-        # Vous pouvez ajuster la sévérité selon vos besoins (ex: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL)
+      - name: Run Trivy IaC scan
+        uses: aquasecurity/trivy-action@0.30.0 # Utilise la version 0.30.0 de l'action Trivy
+        with:
+          scan-type: "config" # Spécifie le scan de configuration IaC
+          input: "." # Scan le répertoire courant
+          format: "table" # Format de sortie (table, json, sarif, etc.)
+          exit-code: "1" # Fait échouer le job si des problèmes sont trouvés
+          severity: "CRITICAL" # Ne signale que les problèmes CRITICAL
+          ignore-unfixed: true # Optionnel: ignore les vulnérabilités sans correctif connu
