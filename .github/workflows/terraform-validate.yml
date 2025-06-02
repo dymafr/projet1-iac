@@ -69,12 +69,6 @@ jobs:
       - name: Run TFLint
         run: tflint --recursive
 
-      # Trivy (Security Scan)
-      - name: Setup Trivy
-        uses: aquasecurity/actions/trivy@master # Utilise la dernière version de l'action Trivy
-        with:
-          version: "latest"
-
       - name: Run Trivy IaC scan
         uses: aquasecurity/trivy-action@0.30.0 # Utilise la version 0.30.0 de l'action Trivy
         with:
