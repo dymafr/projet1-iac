@@ -113,25 +113,38 @@ jobs:
       - name: Terraform Plan
         id: plan
         run: |
-          echo "--- Running Terraform Plan ---"
-          terraform plan -input=false -no-color -detailed-exitcode > plan.txt
-          PLAN_STATUS_CODE=${PIPESTATUS[0]}
-          echo "Terraform Plan Exit Code: $PLAN_STATUS_CODE"
+          terraform plan -input=false -no-color -detailed-exitcode -out=tfplan.binary
+          PLAN_STATUS_CODE=$?
+          echo "Terraform Plan (to binary) Exit Code: $PLAN_STATUS_CODE"
 
-          echo "--- Content of plan.txt ---"
-          cat plan.txt
-          echo "--- End of plan.txt ---"
+          # Step 2: Convert binary plan to text for logging and artifact
+          if [ -f tfplan.binary ]; then
+            terraform show -no-color tfplan.binary > plan.txt
+            echo "--- Content of plan.txt (from tfplan.binary) ---"
+            cat plan.txt
+            echo "--- End of plan.txt ---"
+          else
+            echo "tfplan.binary was not created."
+            # Handle error: plan.txt might be empty or non-existent
+            # If plan failed, plan.txt from show won't exist or be useful
+            # but PLAN_STATUS_CODE from the `plan -out` command is the key here.
+            if [ $PLAN_STATUS_CODE -ne 0 ] && [ $PLAN_STATUS_CODE -ne 2 ]; then # Real error from plan -out
+                echo "PLAN_DETAILS=Erreur critique lors de la génération du fichier de plan (terraform plan -out a échoué avec code $PLAN_STATUS_CODE)" >> $GITHUB_OUTPUT
+                exit $PLAN_STATUS_CODE
+            fi
+          fi
 
+          # Conditional logic based on PLAN_STATUS_CODE from `terraform plan -out=tfplan.binary -detailed-exitcode`
           if [ "$PLAN_STATUS_CODE" -eq 0 ]; then
             echo "PLAN_DETAILS=aucun changement détecté" >> $GITHUB_OUTPUT
-            echo "Condition matched: Exit code is 0 (no changes)."
+            echo "Condition matched: Exit code from plan -out is 0 (no changes)."
           elif [ "$PLAN_STATUS_CODE" -eq 2 ]; then
             echo "PLAN_DETAILS=changements détectés. voir l'artéfact plan et le commentaire de PR" >> $GITHUB_OUTPUT
-            echo "Condition matched: Exit code is 2 (changes detected)."
+            echo "Condition matched: Exit code from plan -out is 2 (changes detected)."
           else
-            echo "PLAN_DETAILS=erreur lors de la génération du plan. Code: $PLAN_STATUS_CODE" >> $GITHUB_OUTPUT
-            echo "Condition matched: Exit code is $PLAN_STATUS_CODE (error)."
-            # Note: 'exit $PLAN_STATUS_CODE' here would be overridden by 'continue-on-error: true' for the step's success/failure status
+            echo "PLAN_DETAILS=erreur lors de la génération du plan (plan -out). Code: $PLAN_STATUS_CODE" >> $GITHUB_OUTPUT
+            echo "Condition matched: Exit code from plan -out is $PLAN_STATUS_CODE (error)."
+            # continue-on-error will still make the step pass, but this indicates a plan error
           fi
         continue-on-error: true # permet de continuer même si le plan échoue, pour commenter la PR
 
