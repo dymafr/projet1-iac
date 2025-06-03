@@ -7,7 +7,3 @@ terraform {
     }
   }
 }
-
-provider "aws" {
-  region = var.aws_region // utilisation de la variable
-}
