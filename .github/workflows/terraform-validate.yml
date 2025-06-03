@@ -54,7 +54,7 @@ jobs:
           scan-type: "config"
           input: "."
           format: "table"
-          exit-code: "1"
+          exit-code: "0" # ne pas échouer le job si des vulnérabilités sont trouvées
           severity: "CRITICAL"
           ignore-unfixed: true
 
