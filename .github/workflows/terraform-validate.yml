@@ -11,9 +11,9 @@ on:
       - staging
 
 permissions:
-  id-token: write # Nécessaire pour l'authentification OIDC AWS
-  contents: read # Nécessaire pour actions/checkout
-  pull-requests: write # Nécessaire pour commenter les PR et pour certaines actions de plan
+  id-token: write # nécessaire pour l’authentification OIDC AWS
+  contents: read # nécessaire pour `actions/checkout`
+  pull-requests: write # nécessaire pour commenter les PR et pour certaines actions de plan
 
 jobs:
   validate-code:
@@ -27,15 +27,15 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::472910743243:role/GitHubActions-Terraform-Role-Projet1 # !!  REMPLACEZ par l'ARN de votre rôle !!
-          aws-region: eu-west-3 # Votre région AWS
+          role-to-assume: arn:aws:iam::472910743243:role/GitHubActions-Terraform-Role-Projet1 # !! remplacez par l’ARN de votre rôle !!
+          aws-region: eu-west-3 # votre région AWS
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.12.1" # Spécifiez la version de Terraform que vous souhaitez utiliser
+          terraform_version: "1.12.1" # spécifiez la version de Terraform à utiliser
 
-      - name: Terraform Init (Validation Mode)
+      - name: Terraform Init (validation mode)
         id: init_validate
         run: terraform init -backend=false -input=false
 
@@ -50,7 +50,7 @@ jobs:
       - name: Setup TFLint
         uses: terraform-linters/setup-tflint@v4
         with:
-          tflint_version: v0.58.0 # Spécifiez la version de TFLint que vous souhaitez utiliser
+          tflint_version: v0.58.0 # spécifiez la version de TFLint à utiliser
 
       - name: Init TFLint
         run: tflint --init
@@ -71,15 +71,8 @@ jobs:
   terraform_plan:
     name: Generate Terraform Plan
     runs-on: ubuntu-latest
-    needs: validate-code # S'exécute seulement si le job validate-code a réussi
+    needs: validate-code # s’exécute seulement si le job validate-code a réussi
     if: github.event_name == 'pull_request'
-
-    env:
-      # Détermine le workspace Terraform en fonction de la branche cible de la PR
-      # Si la PR cible 'main', utilise 'prod'. Si elle cible 'staging', utilise 'dev'.
-      # Sinon (par exemple, PR d'une feature vers staging), utilise 'dev' par défaut pour le plan.
-      # Vous pourriez affiner cette logique.
-      TF_WORKSPACE: ${{ (github.base_ref == 'main' && 'prod') || (github.base_ref == 'staging' && 'dev') || 'dev' }}
 
     steps:
       - name: Checkout code
@@ -88,67 +81,71 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::472910743243:role/GitHubActions-Terraform-Role-Projet1 # !!  REMPLACEZ par l'ARN de votre rôle !!
-          aws-region: eu-west-3 # Votre région AWS
+          role-to-assume: arn:aws:iam::472910743243:role/GitHubActions-Terraform-Role-Projet1 # !! remplacez par l’ARN de votre rôle !!
+          aws-region: eu-west-3 # votre région AWS
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.12.1" # Spécifiez la version de Terraform que vous souhaitez utiliser
+          terraform_version: "1.12.1" # spécifiez la version de Terraform à utiliser
 
-        # '|| terraform workspace new' est une sécurité si le workspace n'existe pas encore,
-      - name: Select Terraform Workspace
+      - name: Determine Terraform workspace
         run: |
-          echo "Selecting workspace: $TF_WORKSPACE"
-          terraform workspace select $TF_WORKSPACE || terraform workspace new $TF_WORKSPACE
+          if [ "${{ github.base_ref }}" = "main" ]; then
+            WORKSPACE=prod
+          elif [ "${{ github.base_ref }}" = "staging" ]; then
+            WORKSPACE=dev
+          else
+            WORKSPACE=dev
+          fi
+          echo "WORKSPACE=$WORKSPACE" >> $GITHUB_ENV
 
-      - name: Terraform Init (for Plan)
+      - name: Terraform Init (for plan)
         id: init_plan
         run: terraform init -input=false
-        # Ici, nous initialisons le backend car le plan en a besoin pour lire l'état actuel.
+        # ici, nous initialisons le backend car le plan en a besoin pour lire l’état actuel
+
+      - name: Select Terraform workspace
+        run: |
+          echo "Selecting workspace: $WORKSPACE"
+          terraform workspace select $WORKSPACE || terraform workspace new $WORKSPACE
 
       - name: Terraform Plan
         id: plan
         run: |
           terraform plan -input=false -no-color -out=tfplan.binary
-          # Convertir le plan binaire en un format lisible pour le commentaire et les logs
           terraform show -no-color tfplan.binary > plan.txt
-          # Pour l'output du step, nous pouvons juste indiquer le résultat du plan
-          # Le plan lui-même sera un artefact.
-          PLAN_STATUS_CODE=${PIPESTATUS[0]} # Capture le code de sortie de `terraform plan`
+          PLAN_STATUS_CODE=${PIPESTATUS[0]} # capture le code de sortie de `terraform plan`
           if [ $PLAN_STATUS_CODE -eq 0 ]; then
-            echo "Plan: No changes."
             echo 'PLAN_DETAILS=No changes detected.' >> $GITHUB_OUTPUT
           elif [ $PLAN_STATUS_CODE -eq 2 ]; then
-            echo "Plan: Changes detected."
             echo 'PLAN_DETAILS=Changes detected. See plan artifact and PR comment.' >> $GITHUB_OUTPUT
           else
-            echo "Plan: Error (Code $PLAN_STATUS_CODE)."
             echo 'PLAN_DETAILS=Error during plan generation.' >> $GITHUB_OUTPUT
             exit $PLAN_STATUS_CODE
           fi
-        continue-on-error: true # Permet de continuer pour commenter même si le plan a des changements (exit code 2) ou une erreur
+        continue-on-error: true # permet de continuer pour commenter même si le plan a des changements (exit code 2) ou une erreur
 
-      - name: Comment PR with Plan Output
+      - name: Comment PR with plan output
         if: success() || failure()
         uses: peter-evans/create-or-update-comment@v4
         with:
           issue-number: ${{ github.event.pull_request.number }}
           body: |
-            ### 📝 Résultat du `terraform plan` pour le workspace `${{ env.TF_WORKSPACE }}`
+            ### 📝 Résultat du `terraform plan` pour le workspace `$WORKSPACE`
 
             ${{ steps.plan.outputs.PLAN_DETAILS }}
 
-            Le plan complet est disponible en tant qu'artefact attaché à ce workflow.
+            Le plan complet est disponible en tant qu’artefact attaché à ce workflow.
 
-            **Veuillez examiner attentivement le plan avant d'approuver cette PR.**
+            **Veuillez examiner attentivement le plan avant d’approuver cette PR.**
 
-      - name: Upload Terraform Plan Artifact
+      - name: Upload Terraform plan artifact
         if: success() || failure()
         uses: actions/upload-artifact@v4
         with:
-          name: terraform-plan-${{ env.TF_WORKSPACE }}
+          name: terraform-plan-$WORKSPACE
           path: |
             tfplan.binary
             plan.txt
-          retention-days: 7 # Conserve l'artefact pendant 7 jours
+          retention-days: 7 # conserve l’artefact pendant 7 jours
