@@ -113,17 +113,27 @@ jobs:
       - name: Terraform Plan
         id: plan
         run: |
+          echo "--- Running Terraform Plan ---"
           terraform plan -input=false -no-color -detailed-exitcode > plan.txt
-          PLAN_STATUS_CODE=${PIPESTATUS[0]} # capture le code de sortie de terraform plan
-          if [ $PLAN_STATUS_CODE -eq 0 ]; then
+          PLAN_STATUS_CODE=${PIPESTATUS[0]}
+          echo "Terraform Plan Exit Code: $PLAN_STATUS_CODE"
+
+          echo "--- Content of plan.txt ---"
+          cat plan.txt
+          echo "--- End of plan.txt ---"
+
+          if [ "$PLAN_STATUS_CODE" -eq 0 ]; then
             echo "PLAN_DETAILS=aucun changement détecté" >> $GITHUB_OUTPUT
-          elif [ $PLAN_STATUS_CODE -eq 2 ]; then
+            echo "Condition matched: Exit code is 0 (no changes)."
+          elif [ "$PLAN_STATUS_CODE" -eq 2 ]; then
             echo "PLAN_DETAILS=changements détectés. voir l'artéfact plan et le commentaire de PR" >> $GITHUB_OUTPUT
+            echo "Condition matched: Exit code is 2 (changes detected)."
           else
-            echo "PLAN_DETAILS=erreur lors de la génération du plan" >> $GITHUB_OUTPUT
-            exit $PLAN_STATUS_CODE
+            echo "PLAN_DETAILS=erreur lors de la génération du plan. Code: $PLAN_STATUS_CODE" >> $GITHUB_OUTPUT
+            echo "Condition matched: Exit code is $PLAN_STATUS_CODE (error)."
+            # Note: 'exit $PLAN_STATUS_CODE' here would be overridden by 'continue-on-error: true' for the step's success/failure status
           fi
-        continue-on-error: true # permet au workflow de continuer même si terraform plan renvoie 2
+        continue-on-error: true # permet de continuer même si le plan échoue, pour commenter la PR
 
       - name: Comment PR with plan output
         if: success() || failure()
