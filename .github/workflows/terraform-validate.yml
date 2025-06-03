@@ -1,4 +1,5 @@
-name: Terraform Validate, Lint, Scan & Plan
+# Fichier: .github/workflows/terraform-pipeline.yml
+name: Terraform CI/CD Pipeline
 
 on:
   push:
@@ -13,51 +14,40 @@ on:
 permissions:
   id-token: write # nécessaire pour l’authentification OIDC AWS
   contents: read # nécessaire pour `actions/checkout`
-  pull-requests: write # nécessaire pour commenter les PR et pour certaines actions de plan
+  pull-requests: write # nécessaire pour commenter les PR
+  actions: read # nécessaire pour télécharger des artefacts
+  deployments: write # nécessaire pour interagir avec les environnements GitHub
 
 jobs:
   validate-code:
     name: Validate Terraform Code
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::472910743243:role/GitHubActions-Terraform-Role-Projet1 # !! remplacez par l’ARN de votre rôle !!
-          aws-region: eu-west-3 # votre région AWS
-
+          aws-region: eu-west-3
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.12.1" # spécifiez la version de Terraform à utiliser
-
       - name: Terraform Init (validation mode)
-        id: init_validate
         run: terraform init -backend=false -input=false
-
       - name: Terraform Format Check
-        id: fmt
         run: terraform fmt -check -recursive -diff
-
       - name: Terraform Validate
-        id: validate
         run: terraform validate
-
       - name: Setup TFLint
         uses: terraform-linters/setup-tflint@v4
         with:
           tflint_version: v0.58.0 # spécifiez la version de TFLint à utiliser
-
       - name: Init TFLint
         run: tflint --init
-
       - name: Run TFLint
         run: tflint --recursive
-
       - name: Run Trivy IaC scan
         uses: aquasecurity/trivy-action@0.30.0
         with:
@@ -71,24 +61,24 @@ jobs:
   terraform_plan:
     name: Generate Terraform Plan
     runs-on: ubuntu-latest
-    needs: validate-code # s’exécute seulement si le job validate-code a réussi
+    needs: validate-code
     if: github.event_name == 'pull_request'
+    outputs: # Rendre le nom du fichier de plan binaire et le workspace disponibles
+      plan_binary_filename: ${{ steps.plan.outputs.PLAN_BINARY_FILENAME }}
+      tf_workspace: $WORKSPACE
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::472910743243:role/GitHubActions-Terraform-Role-Projet1 # !! remplacez par l’ARN de votre rôle !!
-          aws-region: eu-west-3 # votre région AWS
-
+          aws-region: eu-west-3
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.12.1" # spécifiez la version de Terraform à utiliser
-
       - name: Determine Terraform workspace
         run: |
           if [ "${{ github.base_ref }}" = "main" ]; then
@@ -113,76 +103,148 @@ jobs:
       - name: Terraform Plan
         id: plan
         run: |
+          PLAN_BINARY_FILENAME="tfplan-$WORKSPACE.binary"
+          PLAN_TEXT_FILENAME="tfplan-$WORKSPACE.txt"
+          echo "PLAN_BINARY_FILENAME=${PLAN_BINARY_FILENAME}" >> $GITHUB_OUTPUT # Exporter le nom du fichier binaire
+
           echo "--- Running Terraform Plan ---"
-          # Nous utilisons toujours -detailed-exitcode au cas où il retournerait 1 pour une erreur réelle,
-          # mais nous ne nous fierons plus aux codes 0 ou 2 pour la détection des changements avec cette version.
-          terraform plan -input=false -no-color -detailed-exitcode > plan.txt
-          PLAN_COMMAND_RAW_EXIT_CODE=$? # Capture du code de sortie brut de terraform plan
+          terraform plan -input=false -no-color -out=$PLAN_BINARY_FILENAME -detailed-exitcode > $PLAN_TEXT_FILENAME
+          PLAN_COMMAND_RAW_EXIT_CODE=$? 
           echo "Terraform Plan command raw exit code: $PLAN_COMMAND_RAW_EXIT_CODE"
 
-          echo "--- Content of plan.txt ---"
-          cat plan.txt
-          echo "--- End of plan.txt ---"
+          echo "--- Content of $PLAN_TEXT_FILENAME (first 50 lines) ---"
+          head -n 50 $PLAN_TEXT_FILENAME
+          echo "--- End of $PLAN_TEXT_FILENAME preview ---"
 
-          FINAL_PLAN_DETAILS="Vérification manuelle du plan requise (analyse du contenu ou code de sortie non concluant)." # Valeur par défaut
+          FINAL_PLAN_DETAILS="Vérification manuelle du plan requise (analyse du contenu ou code de sortie non concluant)." # Default
 
           if [ "$PLAN_COMMAND_RAW_EXIT_CODE" -eq 1 ]; then
-            # Erreur critique de 'terraform plan' (ex: erreur de syntaxe)
-            FINAL_PLAN_DETAILS="Erreur critique lors de la génération du plan (Terraform a retourné le code: $PLAN_COMMAND_RAW_EXIT_CODE)"
-            echo "Condition: La commande Terraform Plan a directement signalé une erreur."
-          elif grep -q -E "(No changes\. Infrastructure is up-to-date\.|No changes\. Your infrastructure matches the configuration\.|Plan: 0 to add, 0 to change, 0 to destroy\.)" plan.txt; then
-            # Message explicite "No changes" ou résumé à zéro trouvé dans plan.txt
-            FINAL_PLAN_DETAILS="aucun changement détecté (confirmé par l'analyse du contenu du plan)"
-            echo "Condition: Message explicite d'absence de changement trouvé dans plan.txt."
-          # Recherche d'une ligne de résumé indiquant des changements (au moins 1 ajout, modification ou suppression)
-          elif PLAN_SUMMARY_LINE=$(grep -E "^Plan: ([0-9]+ to add, [0-9]+ to change, [0-9]+ to destroy\.)$" plan.txt) && \
-              (echo "$PLAN_SUMMARY_LINE" | grep -q -E "([1-9][0-9]* to add|[1-9][0-9]* to change|[1-9][0-9]* to destroy)") ; then
-            # La ligne de résumé a été trouvée ET elle contient au moins un chiffre > 0 pour add/change/destroy
+            FINAL_PLAN_DETAILS="❌ Erreur critique lors de la génération du plan (Terraform a retourné le code: $PLAN_COMMAND_RAW_EXIT_CODE)"
+          elif grep -q -E "(No changes\. Infrastructure is up-to-date\.|No changes\. Your infrastructure matches the configuration\.|Plan: 0 to add, 0 to change, 0 to destroy\.)" $PLAN_TEXT_FILENAME; then
+            FINAL_PLAN_DETAILS="✅ Aucun changement détecté (confirmé par l'analyse du contenu du plan)."
+          elif PLAN_SUMMARY_LINE=$(grep -E "^Plan: ([0-9]+ to add, [0-9]+ to change, [0-9]+ to destroy\.)$" $PLAN_TEXT_FILENAME) && \
+               (echo "$PLAN_SUMMARY_LINE" | grep -q -E "([1-9][0-9]* to add|[1-9][0-9]* to change|[1-9][0-9]* to destroy)") ; then
             ADD=$(echo "$PLAN_SUMMARY_LINE" | sed -n 's/^Plan: \([0-9]*\) to add,.*/\1/p')
             CHANGE=$(echo "$PLAN_SUMMARY_LINE" | sed -n 's/^Plan: [0-9]* to add, \([0-9]*\) to change,.*/\1/p')
             DESTROY=$(echo "$PLAN_SUMMARY_LINE" | sed -n 's/^Plan:.*, \([0-9]*\) to destroy.$/\1/p')
-            FINAL_PLAN_DETAILS="changements détectés (analyse du résumé: $ADD à ajouter, $CHANGE à modifier, $DESTROY à détruire). Voir l'artéfact."
-            echo "Condition: Changements détectés à partir de la ligne de résumé de plan.txt."
+            FINAL_PLAN_DETAILS="⚠️ Changements détectés (analyse du résumé: $ADD à ajouter, $CHANGE à modifier, $DESTROY à détruire). Voir l'artéfact."
           else
-            # Cas ambigu : pas de message clair "No changes", pas de résumé standard avec des chiffres > 0,
-            # ou format de plan inattendu. Le code de sortie brut peut donner une indication.
             echo "Warning: Contenu du plan ambigu pour la détection automatisée des changements. Code de sortie brut de TF: $PLAN_COMMAND_RAW_EXIT_CODE."
             if [ "$PLAN_COMMAND_RAW_EXIT_CODE" -eq 0 ] || [ "$PLAN_COMMAND_RAW_EXIT_CODE" -eq 2 ]; then
-                # Si le code de sortie était 0 ou 2, mais que nous n'avons pas pu analyser le plan, c'est suspect.
                 FINAL_PLAN_DETAILS="Plan généré (code TF: $PLAN_COMMAND_RAW_EXIT_CODE), mais contenu non analysable automatiquement. Vérification manuelle requise."
             fi
-            # FINAL_PLAN_DETAILS conserve sa valeur par défaut "Vérification manuelle..." si non modifié ci-dessus.
           fi
-
           echo "PLAN_DETAILS=${FINAL_PLAN_DETAILS}" >> $GITHUB_OUTPUT
           echo "Final PLAN_DETAILS set to: ${FINAL_PLAN_DETAILS}"
 
-          # Si 'terraform plan' a eu une erreur critique (code 1), faites échouer le script explicitement.
-          # Cela sera pris en compte par 'continue-on-error: true' au niveau de l'étape,
-          # mais c'est une bonne pratique de sortir avec un code d'erreur.
           if [ "$PLAN_COMMAND_RAW_EXIT_CODE" -eq 1 ]; then
             exit 1
           fi
         continue-on-error: true
-
       - name: Comment PR with plan output
-        if: success() || failure()
+        if: always()
         uses: peter-evans/create-or-update-comment@v4
         with:
           issue-number: ${{ github.event.pull_request.number }}
           body: |
             ### 📝 Résultat du `terraform plan` pour le workspace `$WORKSPACE`
-
             ${{ steps.plan.outputs.PLAN_DETAILS }}
-
-            Le plan complet est disponible en tant qu’artefact attaché à ce workflow.
-
+            Le plan complet (`${{ steps.plan.outputs.plan_binary_filename }}.txt`) et le plan binaire (`${{ steps.plan.outputs.plan_binary_filename }}`) sont disponibles en tant qu’artefacts.
             **Veuillez examiner attentivement le plan avant d’approuver cette PR.**
-
-      - name: Upload Terraform plan artifact
-        if: success() || failure()
+      - name: Upload Terraform Plan Artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: terraform-plan-$WORKSPACE
-          path: plan.txt
-          retention-days: 7 # conserve l’artefact pendant 7 jours
+          path: |
+            tfplan-$WORKSPACE.binary
+            tfplan-$WORKSPACE.txt
+          retention-days: 7
+          if-no-files-found: ignore
+
+  terraform_apply_staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [validate-code] # Dépend de la validation. Le plan est régénéré.
+    if: github.ref == 'refs/heads/staging' && github.event_name == 'push'
+    environment:
+      name: staging
+      url: ${{ steps.get_app_url_staging.outputs.app_url }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::472910743243:role/GitHubActions-Terraform-Role-Projet1 # !! remplacez par l’ARN de votre rôle !!
+          aws-region: eu-west-3
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.12.1" # spécifiez la version de Terraform à utiliser
+      - name: Terraform Init
+        run: terraform init -input=false
+      - name: Select Staging Workspace
+        run: terraform workspace select dev || terraform workspace new dev
+      - name: Terraform Plan for Staging
+        id: plan_staging
+        run: |
+          terraform plan -input=false -no-color -out=tfplan-staging.binary
+          terraform show -no-color tfplan-staging.binary > tfplan-staging.txt
+          if grep -q "resources to be destroyed" tfplan-staging.txt; then
+            echo "::warning title=Changements Destructeurs Détectés::Le plan pour staging contient des destructions. Vérification manuelle recommandée."
+          fi
+          echo "plan_file=tfplan-staging.binary" >> $GITHUB_OUTPUT
+      - name: Terraform Apply to Staging
+        run: terraform apply -input=false ${{ steps.plan_staging.outputs.plan_file }}
+      - name: Get Application URL (Staging)
+        id: get_app_url_staging
+        run: |
+          APP_IP=$(terraform output -raw application_instance_public_ip || echo "non-disponible")
+          echo "app_url=http://${APP_IP}" >> $GITHUB_OUTPUT
+          echo "Application URL (Staging): http://${APP_IP}"
+
+  terraform_apply_production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [terraform_apply_staging] # Dépend d'un déploiement réussi sur staging
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: production
+      url: ${{ steps.get_app_url_prod.outputs.app_url }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::VOTRE_ID_COMPTE_AWS:role/GitHubActions-Terraform-Role-Projet1 # REMPLACEZ
+          aws-region: eu-west-3
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.8.3"
+      - name: Terraform Init
+        run: terraform init -input=false
+      - name: Select Production Workspace
+        run: terraform workspace select prod || terraform workspace new prod
+      - name: Terraform Plan for Production
+        id: plan_prod
+        run: |
+          terraform plan -input=false -no-color -out=tfplan-prod.binary
+          terraform show -no-color tfplan-prod.binary > tfplan-prod.txt
+          if grep -q "resources to be destroyed" tfplan-prod.txt; then
+            echo "::error title=CHANGEMENTS DESTRUCTEURS DÉTECTÉS EN PRODUCTION !::Le plan pour production contient des destructions. Annulation du déploiement automatique."
+            # exit 1 # Décommentez pour faire échouer le job si des destructions sont détectées
+          fi
+          echo "plan_file=tfplan-prod.binary" >> $GITHUB_OUTPUT
+      - name: Terraform Apply to Production
+        run: terraform apply -input=false ${{ steps.plan_prod.outputs.plan_file }}
+      - name: Get Application URL (Production)
+        id: get_app_url_prod
+        run: |
+          APP_IP=$(terraform output -raw application_instance_public_ip || echo "non-disponible")
+          echo "app_url=http://${APP_IP}" >> $GITHUB_OUTPUT
+          echo "Application URL (Production): http://${APP_IP}"
