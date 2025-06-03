@@ -29,19 +29,11 @@ resource "aws_security_group" "web_sg" {
   }
 }
 
-# resource "aws_key_pair" "my_key" {
-#   key_name   = "my-key"
-#   public_key = file("../../key.pub")
-# }
-
 
 resource "aws_instance" "web_server" {
-  ami           = var.ami_id
-  instance_type = var.instance_type
-  subnet_id     = var.subnet_id
-  # key_name      = aws_key_pair.my_key.key_name
-
-
+  ami                         = var.ami_id
+  instance_type               = var.instance_type
+  subnet_id                   = var.subnet_id
   associate_public_ip_address = true
 
   metadata_options {
@@ -52,11 +44,16 @@ resource "aws_instance" "web_server" {
   vpc_security_group_ids = [aws_security_group.web_sg.id]
 
   user_data = <<-EOF
+user_data = <<-EOF
 #!/bin/bash
 dnf update -y
 dnf install nginx -y
 systemctl start nginx
 systemctl enable nginx
+
+# on injecte les valeurs terraform dans des variables shell
+ENVIRONMENT_TAG="${var.environment_tag}"
+PROJECT_NAME="${var.project_name}"
 
 TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
 
@@ -72,7 +69,7 @@ cat <<EOT > /usr/share/nginx/html/index.html
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Infos Instance EC2 (NGINX) - ${var.environment_tag}</title>
+    <title>Infos Instance EC2 (NGINX) - $ENVIRONMENT_TAG</title>
     <style>
       body { font-family: Arial, sans-serif; margin: 20px; background-color: #f0f8ff; color: #333; }
       h1 { color: #2072a9; }
@@ -84,7 +81,7 @@ cat <<EOT > /usr/share/nginx/html/index.html
     </style>
   </head>
   <body>
-    <h1>Informations sur cette Instance EC2 (Servi par NGINX) - Environnement: ${var.environment_tag}</h1>
+    <h1>Informations sur cette Instance EC2 (Servi par NGINX) - Environnement: $ENVIRONMENT_TAG</h1>
     <table>
       <tr><th>Attribut</th><th>Valeur</th></tr>
       <tr><td>ID de l'Instance</td><td>$INSTANCE_ID</td></tr>
@@ -92,7 +89,7 @@ cat <<EOT > /usr/share/nginx/html/index.html
       <tr><td>Zone de Disponibilité</td><td>$AVAILABILITY_ZONE</td></tr>
       <tr><td>IP Publique IPv4</td><td>$PUBLIC_IPV4</td></tr>
       <tr><td>IP Privée IPv4</td><td>$PRIVATE_IPV4</td></tr>
-      <tr><td>Nom du Projet</td><td>${var.project_name}</td></tr>
+      <tr><td>Nom du Projet</td><td>$PROJECT_NAME</td></tr>
     </table>
   </body>
 </html>
