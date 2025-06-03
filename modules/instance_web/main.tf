@@ -38,17 +38,17 @@ resource "aws_security_group" "web_sg" {
   }
 }
 
-resource "aws_key_pair" "my_key" {
-  key_name   = "my-key"
-  public_key = file("/home/erwan/code/dyma-iac/key.pub")
-}
+# resource "aws_key_pair" "my_key" {
+#   key_name   = "my-key"
+#   public_key = file("/home/erwan/code/dyma-iac/key.pub")
+# }
 
 resource "aws_instance" "web_server" {
   ami                         = var.ami_id
   instance_type               = var.instance_type
   subnet_id                   = var.subnet_id
   associate_public_ip_address = true
-  key_name                    = aws_key_pair.my_key.key_name
+  # key_name                    = aws_key_pair.my_key.key_name
 
   metadata_options {
     http_tokens   = "required"
