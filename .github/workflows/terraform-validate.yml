@@ -113,8 +113,7 @@ jobs:
       - name: Terraform Plan
         id: plan
         run: |
-          terraform plan -input=false -no-color -out=tfplan.binary
-          terraform show -no-color tfplan.binary > plan.txt
+          terraform plan -input=false -no-color > plan.txt
           PLAN_STATUS_CODE=${PIPESTATUS[0]} # capture le code de sortie de `terraform plan`
           if [ $PLAN_STATUS_CODE -eq 0 ]; then
             echo 'PLAN_DETAILS=No changes detected.' >> $GITHUB_OUTPUT
@@ -145,7 +144,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: terraform-plan-$WORKSPACE
-          path: |
-            tfplan.binary
-            plan.txt
+          path: plan.txt
           retention-days: 7 # conserve l’artefact pendant 7 jours
