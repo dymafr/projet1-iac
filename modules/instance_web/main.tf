@@ -12,6 +12,15 @@ resource "aws_security_group" "web_sg" {
     ipv6_cidr_blocks = ["::/0"]
   }
 
+  ingress {
+    description      = "SSH from specific IP"
+    from_port        = 22
+    to_port          = 22
+    protocol         = "tcp"
+    cidr_blocks      = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+
   egress {
     description      = "Allow all outbound traffic"
     from_port        = 0
@@ -29,12 +38,17 @@ resource "aws_security_group" "web_sg" {
   }
 }
 
+resource "aws_key_pair" "my_key" {
+  key_name   = "my-key"
+  public_key = file("/home/erwan/code/dyma-iac/key.pub")
+}
 
 resource "aws_instance" "web_server" {
   ami                         = var.ami_id
   instance_type               = var.instance_type
   subnet_id                   = var.subnet_id
   associate_public_ip_address = true
+  key_name                    = aws_key_pair.my_key.key_name
 
   metadata_options {
     http_tokens   = "required"
@@ -43,7 +57,14 @@ resource "aws_instance" "web_server" {
 
   vpc_security_group_ids = [aws_security_group.web_sg.id]
 
-  user_data = <<-EOF
+  tags = {
+    Name        = "WebServer-NGINX-${var.project_name}"
+    Environment = var.environment_tag
+    ManagedBy   = "Terraform"
+    Project     = var.project_name
+  }
+
+  user_data = <<EOF
 #!/bin/bash
 dnf update -y
 dnf install nginx -y
@@ -53,6 +74,7 @@ systemctl enable nginx
 # on injecte les valeurs terraform dans des variables shell
 ENVIRONMENT_TAG="${var.environment_tag}"
 PROJECT_NAME="${var.project_name}"
+
 
 TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
 
@@ -95,10 +117,4 @@ cat <<EOT > /usr/share/nginx/html/index.html
 EOT
 EOF
 
-  tags = {
-    Name        = "WebServer-NGINX-${var.project_name}"
-    Environment = var.environment_tag
-    ManagedBy   = "Terraform"
-    Project     = var.project_name
-  }
 }
