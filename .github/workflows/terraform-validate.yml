@@ -82,6 +82,7 @@ jobs:
       - name: Determine Terraform workspace
         id: set_workspace
         run: |
+          # déterminer le workspace Terraform en fonction de la branche de base de la PR
           if [ "${{ github.base_ref }}" = "main" ]; then
             WORKSPACE=prod
           elif [ "${{ github.base_ref }}" = "staging" ]; then
@@ -94,7 +95,7 @@ jobs:
       - name: Terraform Init (for plan)
         id: init_plan
         run: terraform init -input=false
-        # Ici , nous initialisons le backend car le plan en a besoin pour lire l’état actuel
+        # ici, nous initialisons le backend car le plan en a besoin pour lire l’état actuel
       - name: Select Terraform workspace
         run: |
           echo "Selecting workspace : $WORKSPACE"
@@ -115,7 +116,7 @@ jobs:
           head -n 50 $PLAN_TEXT_FILENAME
           echo "--- end of $PLAN_TEXT_FILENAME preview ---"
 
-          FINAL_PLAN_DETAILS="vérification manuelle du plan requise (analyse du contenu ou code de sortie non concluant)." # default
+          FINAL_PLAN_DETAILS="vérification manuelle du plan requise (analyse du contenu ou code de sortie non concluant)." # valeur par défaut
 
           if [ "$PLAN_COMMAND_RAW_EXIT_CODE" -eq 1 ]; then
             FINAL_PLAN_DETAILS="❌ erreur critique lors de la génération du plan (terraform a retourné le code : $PLAN_COMMAND_RAW_EXIT_CODE)"
@@ -197,17 +198,28 @@ jobs:
           echo "plan_file=tfplan-staging.binary" >> $GITHUB_OUTPUT
       - name: Terraform Apply to Staging
         run: terraform apply -input=false ${{ steps.plan_staging.outputs.plan_file }}
-      - name: Get Application URL (Staging)
+      - name: récupérer l’IP et formater la sortie
         id: get_app_url_staging
         run: |
-          APP_IP=$(terraform output -raw application_instance_public_ip || echo "non-disponible")
-          echo "app_url=http://${APP_IP}" >> $GITHUB_OUTPUT
-          echo "application URL (staging) : http://${APP_IP}"
+          # désactiver l’arrêt automatique pour gérer l’absence d’output
+          set +e
+          APP_IP=$(terraform output -raw application_instance_public_ip)
+          RETCODE=$?
+          set -e
+
+          if [ $RETCODE -ne 0 ] || [ -z "$APP_IP" ]; then
+            echo "# la sortie Terraform n’existe pas ou est vide"
+            echo "app_url=non-disponible" >> $GITHUB_OUTPUT
+            echo "url de l’application (staging) : non-disponible"
+          else
+            echo "app_url=http://${APP_IP}" >> $GITHUB_OUTPUT
+            echo "url de l’application (staging) : http://${APP_IP}"
+          fi
 
   terraform_apply_production:
     name: Deploy to Production
     runs-on: ubuntu-latest
-    needs: [terraform_apply_staging] # dépend d'un déploiement réussi sur staging
+    needs: [terraform_apply_staging] # dépend d’un déploiement réussi sur staging
     if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
     environment:
       name: production
@@ -241,9 +253,20 @@ jobs:
           echo "plan_file=tfplan-prod.binary" >> $GITHUB_OUTPUT
       - name: Terraform Apply to Production
         run: terraform apply -input=false ${{ steps.plan_prod.outputs.plan_file }}
-      - name: Get Application URL (Production)
+      - name: récupérer l’IP et formater la sortie (production)
         id: get_app_url_prod
         run: |
-          APP_IP=$(terraform output -raw application_instance_public_ip || echo "non-disponible")
-          echo "app_url=http://${APP_IP}" >> $GITHUB_OUTPUT
-          echo "application URL (production) : http://${APP_IP}"
+          # désactiver l’arrêt automatique pour gérer l’absence d’output
+          set +e
+          APP_IP=$(terraform output -raw application_instance_public_ip)
+          RETCODE=$?
+          set -e
+
+          if [ $RETCODE -ne 0 ] || [ -z "$APP_IP" ]; then
+            echo "# la sortie Terraform n’existe pas ou est vide"
+            echo "app_url=non-disponible" >> $GITHUB_OUTPUT
+            echo "url de l’application (production) : non-disponible"
+          else
+            echo "app_url=http://${APP_IP}" >> $GITHUB_OUTPUT
+            echo "url de l’application (production) : http://${APP_IP}"
+          fi
