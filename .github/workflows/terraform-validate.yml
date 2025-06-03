@@ -1,4 +1,4 @@
-# Fichier: .github/workflows/terraform-pipeline.yml
+# Fichier : .github/workflows/terraform-pipeline.yml
 name: Terraform CI/CD Pipeline
 
 on:
@@ -12,7 +12,7 @@ on:
       - staging
 
 permissions:
-  id-token: write # nécessaire pour l’authentification OIDC AWS
+  id-token: write # nécessaire pour l’authentification `OIDC` AWS
   contents: read # nécessaire pour `actions/checkout`
   pull-requests: write # nécessaire pour commenter les PR
   actions: read # nécessaire pour télécharger des artefacts
@@ -33,7 +33,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.12.1" # spécifiez la version de Terraform à utiliser
+          terraform_version: "1.12.1" # spécifiez la version de `Terraform` à utiliser
       - name: Terraform Init (validation mode)
         run: terraform init -backend=false -input=false
       - name: Terraform Format Check
@@ -43,7 +43,7 @@ jobs:
       - name: Setup TFLint
         uses: terraform-linters/setup-tflint@v4
         with:
-          tflint_version: v0.58.0 # spécifiez la version de TFLint à utiliser
+          tflint_version: v0.58.0 # spécifiez la version de `TFLint` à utiliser
       - name: Init TFLint
         run: tflint --init
       - name: Run TFLint
@@ -62,10 +62,10 @@ jobs:
     name: Generate Terraform Plan
     runs-on: ubuntu-latest
     needs: validate-code
-    if: github.event_name == 'pull_request'
-    outputs: # Rendre le nom du fichier de plan binaire et le workspace disponibles
+    if: ${{ github.event_name == 'pull_request' }}
+    outputs: # rendre le nom du fichier de plan binaire et le workspace disponibles
       plan_binary_filename: ${{ steps.plan.outputs.PLAN_BINARY_FILENAME }}
-      tf_workspace: $WORKSPACE
+      tf_workspace: ${{ steps.set_workspace.outputs.tf_workspace }}
 
     steps:
       - name: Checkout code
@@ -78,8 +78,9 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.12.1" # spécifiez la version de Terraform à utiliser
+          terraform_version: "1.12.1" # spécifiez la version de `Terraform` à utiliser
       - name: Determine Terraform workspace
+        id: set_workspace
         run: |
           if [ "${{ github.base_ref }}" = "main" ]; then
             WORKSPACE=prod
@@ -89,53 +90,51 @@ jobs:
             WORKSPACE=dev
           fi
           echo "WORKSPACE=$WORKSPACE" >> $GITHUB_ENV
-
+          echo "tf_workspace=$WORKSPACE" >> $GITHUB_OUTPUT
       - name: Terraform Init (for plan)
         id: init_plan
         run: terraform init -input=false
-        # ici, nous initialisons le backend car le plan en a besoin pour lire l’état actuel
-
+        # Ici , nous initialisons le backend car le plan en a besoin pour lire l’état actuel
       - name: Select Terraform workspace
         run: |
-          echo "Selecting workspace: $WORKSPACE"
+          echo "Selecting workspace : $WORKSPACE"
           terraform workspace select $WORKSPACE || terraform workspace new $WORKSPACE
-
       - name: Terraform Plan
         id: plan
         run: |
-          PLAN_BINARY_FILENAME="tfplan-$WORKSPACE.binary"
-          PLAN_TEXT_FILENAME="tfplan-$WORKSPACE.txt"
-          echo "PLAN_BINARY_FILENAME=${PLAN_BINARY_FILENAME}" >> $GITHUB_OUTPUT # Exporter le nom du fichier binaire
+          PLAN_BINARY_FILENAME="tfplan-${WORKSPACE}.binary"
+          PLAN_TEXT_FILENAME="tfplan-${WORKSPACE}.txt"
+          echo "PLAN_BINARY_FILENAME=${PLAN_BINARY_FILENAME}" >> $GITHUB_OUTPUT # exporter le nom du fichier binaire
 
-          echo "--- Running Terraform Plan ---"
+          echo "--- running terraform plan ---"
           terraform plan -input=false -no-color -out=$PLAN_BINARY_FILENAME -detailed-exitcode > $PLAN_TEXT_FILENAME
-          PLAN_COMMAND_RAW_EXIT_CODE=$? 
-          echo "Terraform Plan command raw exit code: $PLAN_COMMAND_RAW_EXIT_CODE"
+          PLAN_COMMAND_RAW_EXIT_CODE=$?
+          echo "terraform plan command raw exit code : $PLAN_COMMAND_RAW_EXIT_CODE"
 
-          echo "--- Content of $PLAN_TEXT_FILENAME (first 50 lines) ---"
+          echo "--- content of $PLAN_TEXT_FILENAME (first 50 lines) ---"
           head -n 50 $PLAN_TEXT_FILENAME
-          echo "--- End of $PLAN_TEXT_FILENAME preview ---"
+          echo "--- end of $PLAN_TEXT_FILENAME preview ---"
 
-          FINAL_PLAN_DETAILS="Vérification manuelle du plan requise (analyse du contenu ou code de sortie non concluant)." # Default
+          FINAL_PLAN_DETAILS="vérification manuelle du plan requise (analyse du contenu ou code de sortie non concluant)." # default
 
           if [ "$PLAN_COMMAND_RAW_EXIT_CODE" -eq 1 ]; then
-            FINAL_PLAN_DETAILS="❌ Erreur critique lors de la génération du plan (Terraform a retourné le code: $PLAN_COMMAND_RAW_EXIT_CODE)"
+            FINAL_PLAN_DETAILS="❌ erreur critique lors de la génération du plan (terraform a retourné le code : $PLAN_COMMAND_RAW_EXIT_CODE)"
           elif grep -q -E "(No changes\. Infrastructure is up-to-date\.|No changes\. Your infrastructure matches the configuration\.|Plan: 0 to add, 0 to change, 0 to destroy\.)" $PLAN_TEXT_FILENAME; then
-            FINAL_PLAN_DETAILS="✅ Aucun changement détecté (confirmé par l'analyse du contenu du plan)."
+            FINAL_PLAN_DETAILS="✅ aucun changement détecté (confirmé par l’analyse du contenu du plan)."
           elif PLAN_SUMMARY_LINE=$(grep -E "^Plan: ([0-9]+ to add, [0-9]+ to change, [0-9]+ to destroy\.)$" $PLAN_TEXT_FILENAME) && \
-               (echo "$PLAN_SUMMARY_LINE" | grep -q -E "([1-9][0-9]* to add|[1-9][0-9]* to change|[1-9][0-9]* to destroy)") ; then
+               (echo "$PLAN_SUMMARY_LINE" | grep -q -E "([1-9][0-9]* to add|[1-9][0-9]* to change|[1-9][0-9]* to destroy)"); then
             ADD=$(echo "$PLAN_SUMMARY_LINE" | sed -n 's/^Plan: \([0-9]*\) to add,.*/\1/p')
             CHANGE=$(echo "$PLAN_SUMMARY_LINE" | sed -n 's/^Plan: [0-9]* to add, \([0-9]*\) to change,.*/\1/p')
             DESTROY=$(echo "$PLAN_SUMMARY_LINE" | sed -n 's/^Plan:.*, \([0-9]*\) to destroy.$/\1/p')
-            FINAL_PLAN_DETAILS="⚠️ Changements détectés (analyse du résumé: $ADD à ajouter, $CHANGE à modifier, $DESTROY à détruire). Voir l'artéfact."
+            FINAL_PLAN_DETAILS="⚠️ changements détectés (analyse du résumé : $ADD à ajouter, $CHANGE à modifier, $DESTROY à détruire). voir l’artéfact."
           else
-            echo "Warning: Contenu du plan ambigu pour la détection automatisée des changements. Code de sortie brut de TF: $PLAN_COMMAND_RAW_EXIT_CODE."
+            echo "warning : contenu du plan ambigu pour la détection automatisée des changements. code de sortie brut de tf : $PLAN_COMMAND_RAW_EXIT_CODE."
             if [ "$PLAN_COMMAND_RAW_EXIT_CODE" -eq 0 ] || [ "$PLAN_COMMAND_RAW_EXIT_CODE" -eq 2 ]; then
-                FINAL_PLAN_DETAILS="Plan généré (code TF: $PLAN_COMMAND_RAW_EXIT_CODE), mais contenu non analysable automatiquement. Vérification manuelle requise."
+              FINAL_PLAN_DETAILS="plan généré (code tf : $PLAN_COMMAND_RAW_EXIT_CODE), mais contenu non analysable automatiquement. vérification manuelle requise."
             fi
           fi
           echo "PLAN_DETAILS=${FINAL_PLAN_DETAILS}" >> $GITHUB_OUTPUT
-          echo "Final PLAN_DETAILS set to: ${FINAL_PLAN_DETAILS}"
+          echo "final PLAN_DETAILS set to : ${FINAL_PLAN_DETAILS}"
 
           if [ "$PLAN_COMMAND_RAW_EXIT_CODE" -eq 1 ]; then
             exit 1
@@ -147,26 +146,26 @@ jobs:
         with:
           issue-number: ${{ github.event.pull_request.number }}
           body: |
-            ### 📝 Résultat du `terraform plan` pour le workspace `$WORKSPACE`
+            ### 📝 résultat du `terraform plan` pour le workspace `${{ steps.set_workspace.outputs.tf_workspace }}`
             ${{ steps.plan.outputs.PLAN_DETAILS }}
-            Le plan complet (`${{ steps.plan.outputs.plan_binary_filename }}.txt`) et le plan binaire (`${{ steps.plan.outputs.plan_binary_filename }}`) sont disponibles en tant qu’artefacts.
-            **Veuillez examiner attentivement le plan avant d’approuver cette PR.**
+            le plan complet (`${{ steps.plan.outputs.plan_binary_filename }}.txt`) et le plan binaire (`${{ steps.plan.outputs.plan_binary_filename }}`) sont disponibles en tant qu’artéfacts.
+            **veuillez examiner attentivement le plan avant d’approuver cette PR.**
       - name: Upload Terraform Plan Artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: terraform-plan-$WORKSPACE
+          name: terraform-plan-${{ steps.set_workspace.outputs.tf_workspace }}
           path: |
-            tfplan-$WORKSPACE.binary
-            tfplan-$WORKSPACE.txt
+            tfplan-${{ steps.set_workspace.outputs.tf_workspace }}.binary
+            tfplan-${{ steps.set_workspace.outputs.tf_workspace }}.txt
           retention-days: 7
           if-no-files-found: ignore
 
   terraform_apply_staging:
     name: Deploy to Staging
     runs-on: ubuntu-latest
-    needs: [validate-code] # Dépend de la validation. Le plan est régénéré.
-    if: github.ref == 'refs/heads/staging' && github.event_name == 'push'
+    needs: [validate-code] # dépend de la validation. le plan est régénéré.
+    if: ${{ github.ref == 'refs/heads/staging' && github.event_name == 'push' }}
     environment:
       name: staging
       url: ${{ steps.get_app_url_staging.outputs.app_url }}
@@ -182,7 +181,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.12.1" # spécifiez la version de Terraform à utiliser
+          terraform_version: "1.12.1" # spécifiez la version de `Terraform` à utiliser
       - name: Terraform Init
         run: terraform init -input=false
       - name: Select Staging Workspace
@@ -193,7 +192,7 @@ jobs:
           terraform plan -input=false -no-color -out=tfplan-staging.binary
           terraform show -no-color tfplan-staging.binary > tfplan-staging.txt
           if grep -q "resources to be destroyed" tfplan-staging.txt; then
-            echo "::warning title=Changements Destructeurs Détectés::Le plan pour staging contient des destructions. Vérification manuelle recommandée."
+            echo "::warning title=changements destructeurs détectés::le plan pour staging contient des destructions. vérification manuelle recommandée."
           fi
           echo "plan_file=tfplan-staging.binary" >> $GITHUB_OUTPUT
       - name: Terraform Apply to Staging
@@ -203,13 +202,13 @@ jobs:
         run: |
           APP_IP=$(terraform output -raw application_instance_public_ip || echo "non-disponible")
           echo "app_url=http://${APP_IP}" >> $GITHUB_OUTPUT
-          echo "Application URL (Staging): http://${APP_IP}"
+          echo "application URL (staging) : http://${APP_IP}"
 
   terraform_apply_production:
     name: Deploy to Production
     runs-on: ubuntu-latest
-    needs: [terraform_apply_staging] # Dépend d'un déploiement réussi sur staging
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [terraform_apply_staging] # dépend d'un déploiement réussi sur staging
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
     environment:
       name: production
       url: ${{ steps.get_app_url_prod.outputs.app_url }}
@@ -220,12 +219,12 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::VOTRE_ID_COMPTE_AWS:role/GitHubActions-Terraform-Role-Projet1 # REMPLACEZ
+          role-to-assume: arn:aws:iam::472910743243:role/GitHubActions-Terraform-Role-Projet1 # !! remplacez par l’ARN de votre rôle !!
           aws-region: eu-west-3
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.8.3"
+          terraform_version: "1.12.1" # spécifiez la version de `Terraform` à utiliser
       - name: Terraform Init
         run: terraform init -input=false
       - name: Select Production Workspace
@@ -236,8 +235,8 @@ jobs:
           terraform plan -input=false -no-color -out=tfplan-prod.binary
           terraform show -no-color tfplan-prod.binary > tfplan-prod.txt
           if grep -q "resources to be destroyed" tfplan-prod.txt; then
-            echo "::error title=CHANGEMENTS DESTRUCTEURS DÉTECTÉS EN PRODUCTION !::Le plan pour production contient des destructions. Annulation du déploiement automatique."
-            # exit 1 # Décommentez pour faire échouer le job si des destructions sont détectées
+            echo "::error title=changements destructeurs détectés en production !::le plan pour production contient des destructions. annulation du déploiement automatique."
+            # exit 1 # décommentez pour faire échouer le `job` si des destructions sont détectées
           fi
           echo "plan_file=tfplan-prod.binary" >> $GITHUB_OUTPUT
       - name: Terraform Apply to Production
@@ -247,4 +246,4 @@ jobs:
         run: |
           APP_IP=$(terraform output -raw application_instance_public_ip || echo "non-disponible")
           echo "app_url=http://${APP_IP}" >> $GITHUB_OUTPUT
-          echo "Application URL (Production): http://${APP_IP}"
+          echo "application URL (production) : http://${APP_IP}"
