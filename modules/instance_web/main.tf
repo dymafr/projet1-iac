@@ -31,7 +31,7 @@ resource "aws_security_group" "web_sg" {
 
 resource "aws_key_pair" "my_key" {
   key_name   = "my-key"
-  public_key = file("/home/erwan/code/dyma-iac/key.pub")
+  public_key = file("../../key.pub")
 }
 
 
