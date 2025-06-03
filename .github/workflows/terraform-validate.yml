@@ -203,7 +203,7 @@ jobs:
         run: |
           # désactiver l’arrêt automatique pour gérer l’absence d’output
           set +e
-          APP_IP=$(terraform output -raw application_instance_public_ip)
+          APP_IP=$(terraform output -raw web_server_public_ip)
           RETCODE=$?
           set -e
 
@@ -258,7 +258,7 @@ jobs:
         run: |
           # désactiver l’arrêt automatique pour gérer l’absence d’output
           set +e
-          APP_IP=$(terraform output -raw application_instance_public_ip)
+          APP_IP=$(terraform output -raw web_server_public_ip)
           RETCODE=$?
           set -e
 
