@@ -9,6 +9,5 @@ terraform {
 }
 
 provider "aws" {
-  region  = var.aws_region // utilisation de la variable
-  profile = "projet1-sso"
+  region = var.aws_region // utilisation de la variable
 }
