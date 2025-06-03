@@ -113,40 +113,57 @@ jobs:
       - name: Terraform Plan
         id: plan
         run: |
-          terraform plan -input=false -no-color -detailed-exitcode -out=tfplan.binary
-          PLAN_STATUS_CODE=$?
-          echo "Terraform Plan (to binary) Exit Code: $PLAN_STATUS_CODE"
+          echo "--- Running Terraform Plan ---"
+          # Nous utilisons toujours -detailed-exitcode au cas où il retournerait 1 pour une erreur réelle,
+          # mais nous ne nous fierons plus aux codes 0 ou 2 pour la détection des changements avec cette version.
+          terraform plan -input=false -no-color -detailed-exitcode > plan.txt
+          PLAN_COMMAND_RAW_EXIT_CODE=$? # Capture du code de sortie brut de terraform plan
+          echo "Terraform Plan command raw exit code: $PLAN_COMMAND_RAW_EXIT_CODE"
 
-          # Step 2: Convert binary plan to text for logging and artifact
-          if [ -f tfplan.binary ]; then
-            terraform show -no-color tfplan.binary > plan.txt
-            echo "--- Content of plan.txt (from tfplan.binary) ---"
-            cat plan.txt
-            echo "--- End of plan.txt ---"
+          echo "--- Content of plan.txt ---"
+          cat plan.txt
+          echo "--- End of plan.txt ---"
+
+          FINAL_PLAN_DETAILS="Vérification manuelle du plan requise (analyse du contenu ou code de sortie non concluant)." # Valeur par défaut
+
+          if [ "$PLAN_COMMAND_RAW_EXIT_CODE" -eq 1 ]; then
+            # Erreur critique de 'terraform plan' (ex: erreur de syntaxe)
+            FINAL_PLAN_DETAILS="Erreur critique lors de la génération du plan (Terraform a retourné le code: $PLAN_COMMAND_RAW_EXIT_CODE)"
+            echo "Condition: La commande Terraform Plan a directement signalé une erreur."
+          elif grep -q -E "(No changes\. Infrastructure is up-to-date\.|No changes\. Your infrastructure matches the configuration\.|Plan: 0 to add, 0 to change, 0 to destroy\.)" plan.txt; then
+            # Message explicite "No changes" ou résumé à zéro trouvé dans plan.txt
+            FINAL_PLAN_DETAILS="aucun changement détecté (confirmé par l'analyse du contenu du plan)"
+            echo "Condition: Message explicite d'absence de changement trouvé dans plan.txt."
+          # Recherche d'une ligne de résumé indiquant des changements (au moins 1 ajout, modification ou suppression)
+          elif PLAN_SUMMARY_LINE=$(grep -E "^Plan: ([0-9]+ to add, [0-9]+ to change, [0-9]+ to destroy\.)$" plan.txt) && \
+              (echo "$PLAN_SUMMARY_LINE" | grep -q -E "([1-9][0-9]* to add|[1-9][0-9]* to change|[1-9][0-9]* to destroy)") ; then
+            # La ligne de résumé a été trouvée ET elle contient au moins un chiffre > 0 pour add/change/destroy
+            ADD=$(echo "$PLAN_SUMMARY_LINE" | sed -n 's/^Plan: \([0-9]*\) to add,.*/\1/p')
+            CHANGE=$(echo "$PLAN_SUMMARY_LINE" | sed -n 's/^Plan: [0-9]* to add, \([0-9]*\) to change,.*/\1/p')
+            DESTROY=$(echo "$PLAN_SUMMARY_LINE" | sed -n 's/^Plan:.*, \([0-9]*\) to destroy.$/\1/p')
+            FINAL_PLAN_DETAILS="changements détectés (analyse du résumé: $ADD à ajouter, $CHANGE à modifier, $DESTROY à détruire). Voir l'artéfact."
+            echo "Condition: Changements détectés à partir de la ligne de résumé de plan.txt."
           else
-            echo "tfplan.binary was not created."
-            # Handle error: plan.txt might be empty or non-existent
-            # If plan failed, plan.txt from show won't exist or be useful
-            # but PLAN_STATUS_CODE from the `plan -out` command is the key here.
-            if [ $PLAN_STATUS_CODE -ne 0 ] && [ $PLAN_STATUS_CODE -ne 2 ]; then # Real error from plan -out
-                echo "PLAN_DETAILS=Erreur critique lors de la génération du fichier de plan (terraform plan -out a échoué avec code $PLAN_STATUS_CODE)" >> $GITHUB_OUTPUT
-                exit $PLAN_STATUS_CODE
+            # Cas ambigu : pas de message clair "No changes", pas de résumé standard avec des chiffres > 0,
+            # ou format de plan inattendu. Le code de sortie brut peut donner une indication.
+            echo "Warning: Contenu du plan ambigu pour la détection automatisée des changements. Code de sortie brut de TF: $PLAN_COMMAND_RAW_EXIT_CODE."
+            if [ "$PLAN_COMMAND_RAW_EXIT_CODE" -eq 0 ] || [ "$PLAN_COMMAND_RAW_EXIT_CODE" -eq 2 ]; then
+                # Si le code de sortie était 0 ou 2, mais que nous n'avons pas pu analyser le plan, c'est suspect.
+                FINAL_PLAN_DETAILS="Plan généré (code TF: $PLAN_COMMAND_RAW_EXIT_CODE), mais contenu non analysable automatiquement. Vérification manuelle requise."
             fi
+            # FINAL_PLAN_DETAILS conserve sa valeur par défaut "Vérification manuelle..." si non modifié ci-dessus.
           fi
 
-          # Conditional logic based on PLAN_STATUS_CODE from `terraform plan -out=tfplan.binary -detailed-exitcode`
-          if [ "$PLAN_STATUS_CODE" -eq 0 ]; then
-            echo "PLAN_DETAILS=aucun changement détecté" >> $GITHUB_OUTPUT
-            echo "Condition matched: Exit code from plan -out is 0 (no changes)."
-          elif [ "$PLAN_STATUS_CODE" -eq 2 ]; then
-            echo "PLAN_DETAILS=changements détectés. voir l'artéfact plan et le commentaire de PR" >> $GITHUB_OUTPUT
-            echo "Condition matched: Exit code from plan -out is 2 (changes detected)."
-          else
-            echo "PLAN_DETAILS=erreur lors de la génération du plan (plan -out). Code: $PLAN_STATUS_CODE" >> $GITHUB_OUTPUT
-            echo "Condition matched: Exit code from plan -out is $PLAN_STATUS_CODE (error)."
-            # continue-on-error will still make the step pass, but this indicates a plan error
+          echo "PLAN_DETAILS=${FINAL_PLAN_DETAILS}" >> $GITHUB_OUTPUT
+          echo "Final PLAN_DETAILS set to: ${FINAL_PLAN_DETAILS}"
+
+          # Si 'terraform plan' a eu une erreur critique (code 1), faites échouer le script explicitement.
+          # Cela sera pris en compte par 'continue-on-error: true' au niveau de l'étape,
+          # mais c'est une bonne pratique de sortir avec un code d'erreur.
+          if [ "$PLAN_COMMAND_RAW_EXIT_CODE" -eq 1 ]; then
+            exit 1
           fi
-        continue-on-error: true # permet de continuer même si le plan échoue, pour commenter la PR
+        continue-on-error: true
 
       - name: Comment PR with plan output
         if: success() || failure()
