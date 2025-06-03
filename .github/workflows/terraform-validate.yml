@@ -1,4 +1,4 @@
-name: Terraform Validate, Lint & Scan
+name: Terraform Validate, Lint, Scan & Plan
 
 on:
   push:
@@ -13,7 +13,7 @@ on:
 permissions:
   id-token: write # Nécessaire pour l'authentification OIDC AWS
   contents: read # Nécessaire pour actions/checkout
-  pull-requests: write # Optionnel: pour poster des commentaires sur les PR (vu plus tard)
+  pull-requests: write # Nécessaire pour commenter les PR et pour certaines actions de plan
 
 jobs:
   validate-code:
@@ -30,22 +30,14 @@ jobs:
           role-to-assume: arn:aws:iam::472910743243:role/GitHubActions-Terraform-Role-Projet1 # !!  REMPLACEZ par l'ARN de votre rôle !!
           aws-region: eu-west-3 # Votre région AWS
 
-      # Décommentez et adaptez la section pour OpenTofu si vous l'utilisez
-      # - name: Setup OpenTofu
-      #   uses: opentofu/setup-opentofu@v1
-      #   with:
-      #     tofu_version: '1.7.0' # Spécifiez la version d'OpenTofu
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.12.1" # Spécifiez la version de Terraform que vous souhaitez utiliser
 
-        # Si vous utilisez OpenTofu, remplacez 'terraform' par 'tofu' dans les commandes ci-dessous
       - name: Terraform Init (Validation Mode)
-        id: init
+        id: init_validate
         run: terraform init -backend=false -input=false
-        # Pour la validation pure, backend=false est suffisant.
-        # Pour un 'plan' plus tard, nous aurons besoin d'initialiser le backend.
 
       - name: Terraform Format Check
         id: fmt
@@ -55,7 +47,6 @@ jobs:
         id: validate
         run: terraform validate
 
-      # TFLint (Linter)
       - name: Setup TFLint
         uses: terraform-linters/setup-tflint@v4
         with:
@@ -63,18 +54,101 @@ jobs:
 
       - name: Init TFLint
         run: tflint --init
-        # Assurez-vous d'avoir un fichier .tflint.hcl configuré à la racine de votre projet
-        # avec au moins le plugin AWS activé, comme vu précédemment.
 
       - name: Run TFLint
         run: tflint --recursive
 
       - name: Run Trivy IaC scan
-        uses: aquasecurity/trivy-action@0.30.0 # Utilise la version 0.30.0 de l'action Trivy
+        uses: aquasecurity/trivy-action@0.30.0
         with:
-          scan-type: "config" # Spécifie le scan de configuration IaC
-          input: "." # Scan le répertoire courant
-          format: "table" # Format de sortie (table, json, sarif, etc.)
-          exit-code: "1" # Fait échouer le job si des problèmes sont trouvés
-          severity: "CRITICAL" # Ne signale que les problèmes CRITICAL
-          ignore-unfixed: true # Optionnel: ignore les vulnérabilités sans correctif connu
+          scan-type: "config"
+          input: "."
+          format: "table"
+          exit-code: "1"
+          severity: "CRITICAL"
+          ignore-unfixed: true
+
+  terraform_plan:
+    name: Generate Terraform Plan
+    runs-on: ubuntu-latest
+    needs: validate-code # S'exécute seulement si le job validate-code a réussi
+    if: github.event_name == 'pull_request'
+
+    env:
+      # Détermine le workspace Terraform en fonction de la branche cible de la PR
+      # Si la PR cible 'main', utilise 'prod'. Si elle cible 'staging', utilise 'dev'.
+      # Sinon (par exemple, PR d'une feature vers staging), utilise 'dev' par défaut pour le plan.
+      # Vous pourriez affiner cette logique.
+      TF_WORKSPACE: ${{ (github.base_ref == 'main' && 'prod') || (github.base_ref == 'staging' && 'dev') || 'dev' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::472910743243:role/GitHubActions-Terraform-Role-Projet1 # !!  REMPLACEZ par l'ARN de votre rôle !!
+          aws-region: eu-west-3 # Votre région AWS
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.12.1" # Spécifiez la version de Terraform que vous souhaitez utiliser
+
+        # '|| terraform workspace new' est une sécurité si le workspace n'existe pas encore,
+      - name: Select Terraform Workspace
+        run: |
+          echo "Selecting workspace: $TF_WORKSPACE"
+          terraform workspace select $TF_WORKSPACE || terraform workspace new $TF_WORKSPACE
+
+      - name: Terraform Init (for Plan)
+        id: init_plan
+        run: terraform init -input=false
+        # Ici, nous initialisons le backend car le plan en a besoin pour lire l'état actuel.
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          terraform plan -input=false -no-color -out=tfplan.binary
+          # Convertir le plan binaire en un format lisible pour le commentaire et les logs
+          terraform show -no-color tfplan.binary > plan.txt
+          # Pour l'output du step, nous pouvons juste indiquer le résultat du plan
+          # Le plan lui-même sera un artefact.
+          PLAN_STATUS_CODE=${PIPESTATUS[0]} # Capture le code de sortie de `terraform plan`
+          if [ $PLAN_STATUS_CODE -eq 0 ]; then
+            echo "Plan: No changes."
+            echo 'PLAN_DETAILS=No changes detected.' >> $GITHUB_OUTPUT
+          elif [ $PLAN_STATUS_CODE -eq 2 ]; then
+            echo "Plan: Changes detected."
+            echo 'PLAN_DETAILS=Changes detected. See plan artifact and PR comment.' >> $GITHUB_OUTPUT
+          else
+            echo "Plan: Error (Code $PLAN_STATUS_CODE)."
+            echo 'PLAN_DETAILS=Error during plan generation.' >> $GITHUB_OUTPUT
+            exit $PLAN_STATUS_CODE
+          fi
+        continue-on-error: true # Permet de continuer pour commenter même si le plan a des changements (exit code 2) ou une erreur
+
+      - name: Comment PR with Plan Output
+        if: success() || failure()
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            ### 📝 Résultat du `terraform plan` pour le workspace `${{ env.TF_WORKSPACE }}`
+
+            ${{ steps.plan.outputs.PLAN_DETAILS }}
+
+            Le plan complet est disponible en tant qu'artefact attaché à ce workflow.
+
+            **Veuillez examiner attentivement le plan avant d'approuver cette PR.**
+
+      - name: Upload Terraform Plan Artifact
+        if: success() || failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-${{ env.TF_WORKSPACE }}
+          path: |
+            tfplan.binary
+            plan.txt
+          retention-days: 7 # Conserve l'artefact pendant 7 jours
