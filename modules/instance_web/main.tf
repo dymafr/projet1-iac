@@ -43,9 +43,8 @@ resource "aws_instance" "web_server" {
 
   user_data = templatefile("${path.module}/user_data_script.tpl", {
     # Les clés ici doivent correspondre aux variables utilisées dans le fichier .tpl
-    environment_name_tpl = var.environment_tag # var.environment_tag vient des variables du module
-    project_name_tpl     = var.project_name    # var.project_name vient des variables du module
-    instance_type        = var.instance_type
+    environment_name_tpl = var.environment_tag
+    project_name_tpl     = var.project_name
   })
 
   tags = {

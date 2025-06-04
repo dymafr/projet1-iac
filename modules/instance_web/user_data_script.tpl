@@ -1,19 +1,8 @@
 #!/bin/bash
 yum update -y
-# Utiliser dnf pour Amazon Linux 2023, amazon-linux-extras pour AL2
-%{ if instance_type == "AL2023" ~}
 dnf install nginx -y
-%{ else ~}
-amazon-linux-extras install nginx1 -y
-%{ endif ~}
 systemctl start nginx
 systemctl enable nginx
-
-# on injecte les valeurs terraform dans des variables shell
-# Note: Les variables passées au template sont directement accessibles ici.
-# L'assignation à des variables shell est redondante si elles sont utilisées
-# directement dans le 'here document' ci-dessous.
-# Pour la clarté, nous allons les utiliser directement.
 
 TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
 
