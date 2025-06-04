@@ -1,5 +1,5 @@
 #!/bin/bash
-yum update -y
+dnf update -y
 dnf install nginx -y
 systemctl start nginx
 systemctl enable nginx
