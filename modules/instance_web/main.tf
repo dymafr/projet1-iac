@@ -12,15 +12,6 @@ resource "aws_security_group" "web_sg" {
     ipv6_cidr_blocks = ["::/0"]
   }
 
-  ingress {
-    description      = "SSH from specific IP"
-    from_port        = 22
-    to_port          = 22
-    protocol         = "tcp"
-    cidr_blocks      = ["0.0.0.0/0"]
-    ipv6_cidr_blocks = ["::/0"]
-  }
-
   egress {
     description      = "Allow all outbound traffic"
     from_port        = 0
@@ -38,83 +29,30 @@ resource "aws_security_group" "web_sg" {
   }
 }
 
-# resource "aws_key_pair" "my_key" {
-#   key_name   = "my-key"
-#   public_key = file("/home/erwan/code/dyma-iac/key.pub")
-# }
-
 resource "aws_instance" "web_server" {
   ami                         = var.ami_id
   instance_type               = var.instance_type
   subnet_id                   = var.subnet_id
   associate_public_ip_address = true
-  # key_name                    = aws_key_pair.my_key.key_name
+  vpc_security_group_ids      = [aws_security_group.web_sg.id]
 
   metadata_options {
     http_tokens   = "required"
     http_endpoint = "enabled"
   }
 
-  vpc_security_group_ids = [aws_security_group.web_sg.id]
+  user_data = templatefile("${path.module}/user_data_script.tpl", {
+    # Les clés ici doivent correspondre aux variables utilisées dans le fichier .tpl
+    environment_name_tpl = var.environment_tag # var.environment_tag vient des variables du module
+    project_name_tpl     = var.project_name    # var.project_name vient des variables du module
+    instance_type        = var.instance_type
+  })
 
   tags = {
-    Name        = "WebServer-NGINX-${var.project_name}"
+    Name        = "WebServer-NGINX-${var.project_name}-${var.environment_tag}"
     Environment = var.environment_tag
     ManagedBy   = "Terraform"
     Project     = var.project_name
   }
-
-  user_data = <<EOF
-#!/bin/bash
-dnf update -y
-dnf install nginx -y
-systemctl start nginx
-systemctl enable nginx
-
-# on injecte les valeurs terraform dans des variables shell
-ENVIRONMENT_TAG="${var.environment_tag}"
-PROJECT_NAME="${var.project_name}"
-
-
-TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-
-INSTANCE_ID=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/instance-id)
-INSTANCE_TYPE=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/instance-type)
-AVAILABILITY_ZONE=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/placement/availability-zone)
-PUBLIC_IPV4=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/public-ipv4)
-PRIVATE_IPV4=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/local-ipv4)
-
-cat <<EOT > /usr/share/nginx/html/index.html
-<!DOCTYPE html>
-<html lang="fr">
-  <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Infos Instance EC2 (NGINX) - $ENVIRONMENT_TAG</title>
-    <style>
-      body { font-family: Arial, sans-serif; margin: 20px; background-color: #f0f8ff; color: #333; }
-      h1 { color: #2072a9; }
-      table { border-collapse: collapse; width: 60%; margin-top: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.15); }
-      th, td { text-align: left; padding: 14px; border-bottom: 1px solid #cce5ff; }
-      th { background-color: #2072a9; color: white; }
-      tr:nth-child(even) { background-color: #e7f3fe; }
-      tr:hover { background-color: #d1e7fd; }
-    </style>
-  </head>
-  <body>
-    <h1>Informations sur cette Instance EC2 (Servi par NGINX) - Environnement: $ENVIRONMENT_TAG</h1>
-    <table>
-      <tr><th>Attribut</th><th>Valeur</th></tr>
-      <tr><td>ID de l'Instance</td><td>$INSTANCE_ID</td></tr>
-      <tr><td>Type d'Instance</td><td>$INSTANCE_TYPE</td></tr>
-      <tr><td>Zone de Disponibilité</td><td>$AVAILABILITY_ZONE</td></tr>
-      <tr><td>IP Publique IPv4</td><td>$PUBLIC_IPV4</td></tr>
-      <tr><td>IP Privée IPv4</td><td>$PRIVATE_IPV4</td></tr>
-      <tr><td>Nom du Projet</td><td>$PROJECT_NAME</td></tr>
-    </table>
-  </body>
-</html>
-EOT
-EOF
 
 }
