@@ -35,7 +35,10 @@ module "vpc" {
   enable_dns_hostnames = true
   enable_dns_support   = true
 
-  tags = local.common_tags # Tags communs définis dans locals.tf
+  tags = merge(
+    local.common_tags,
+    { "ManagedBy" = "HCP-Terraform" } // Ajout de notre nouveau tag ici
+  )
 }
 
 # Appel de notre module local 'instance_web'
