@@ -43,7 +43,7 @@ module "vpc" {
 
 # Appel de notre module local 'instance_web'
 module "serveur_web_1" {
-  source = "./modules/instance_web" # Chemin vers notre module
+  source = "app.terraform.io/Dyma/instance-web/aws"
 
   project_name    = var.project_name
   environment_tag = terraform.workspace
